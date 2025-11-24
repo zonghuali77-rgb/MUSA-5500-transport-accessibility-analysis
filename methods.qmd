@@ -1,0 +1,204 @@
+---
+title: Methods
+format: html
+---
+
+This page summarises the analytical workflow and explains why each
+method was chosen. All analysis is implemented in Python using
+GeoPandas, Shapely, scikit-learn, and Matplotlib.
+
+# Data Overview
+
+Two main categories of spatial data are used:
+
+- **City boundaries**
+
+  - New York City borough boundaries from NYC Open Data.  
+  - Singapore 2019 Master Plan planning area boundary from data.gov.sg.  
+  - Administrative areas for Amsterdam from the Open GEO-Data Amsterdam
+    portal.  
+  - Shanghai municipal boundary from Simplemaps, used as an approximate
+    representation where official open data are not available.
+
+- **Bus stop locations**
+
+  - NYC bus shelters from NYC Open Data, treated as a conservative proxy
+    for all bus stops.  
+  - Bus stops from the Land Transport Authority (LTA) via data.gov.sg
+    for Singapore.  
+  - Bus stops tagged as `highway=bus_stop` in OpenStreetMap, retrieved
+    via the Overpass API for Amsterdam and Shanghai.
+
+The mix of official and volunteered geographic information reflects
+a typical situation in comparative urban research, where fully
+harmonised datasets seldom exist.
+
+# Pre-processing and Coordinate Systems
+
+## 1. Standardising CRS
+
+All datasets are first converted to WGS84 geographic coordinates
+(EPSG:4326). For distance and area calculations, each city is then
+reprojected into a suitable projected coordinate reference system:
+
+- New York City and Shanghai – **EPSG:3857** (Web Mercator)  
+- Singapore – **EPSG:3414** (SVY21 / Singapore TM)  
+- Amsterdam – **EPSG:28992** (Amersfoort / RD New)
+
+Using an appropriate metric CRS ensures that area and distance
+calculations (e.g., buffer radii, nearest-neighbour distances) are
+interpretable in metres and square kilometres.
+
+## 2. Cleaning and Merging Boundaries
+
+City boundaries often contain small topological artefacts (e.g. slivers,
+self-intersections). Boundaries are therefore:
+
+1. Exploded into individual polygons,  
+2. Buffered by 0 m to repair common geometry issues,  
+3. Merged into a single multipolygon per city.
+
+For **Shanghai**, multiple polygons represent the municipality
+(including distant islands). To focus on the main urban area, polygons
+are split and the polygon containing the **largest number of bus stops**
+is selected. This heuristic retains the core built-up region (Pudong
+and Puxi) and excludes peripheral islands that have very different
+development patterns.
+
+## 3. Clipping Bus Stops to City Boundaries
+
+Bus stop points are then clipped to the cleaned boundary of each city.
+This ensures that all subsequent indicators refer to the same spatial
+extent when comparing between cities.
+
+# Indicators and Analytical Steps
+
+## 1. Bus Stop Density
+
+**Concept.** Density is defined as the number of bus stops per square
+kilometre of city area. It is a simple but intuitive measure of the
+overall supply of boarding opportunities.
+
+**Implementation.**
+
+1. Reproject the city boundary to the local metric CRS.  
+2. Compute total area \(A\) (km²).  
+3. Count the number of bus stops \(N\) after clipping.  
+4. Calculate
+
+\[
+\text{Density} = \frac{N}{A}\quad [\text{stops per km}^2].
+\]
+
+**Interpretation.** High density indicates either closely spaced stops
+or a large number of routes, but does not directly reveal where within
+the city stops are concentrated. It is therefore complemented by the
+spatially explicit methods below.
+
+## 2. 500 m Walking Coverage
+
+**Concept.** A 500 m Euclidean buffer is used as a proxy for the area
+within a reasonable walking distance (approximately 5–7 minutes) of a
+bus stop. The indicator measures the share of city land that is
+potentially “bus-accessible”.
+
+**Implementation.**
+
+1. In the projected CRS, create a 500 m circular buffer around each bus
+   stop.  
+2. Merge all buffers into a single coverage polygon.  
+3. Intersect the merged buffer with the city boundary.  
+4. Compute the ratio
+
+\[
+\text{Coverage}_{500m} =
+  \frac{\text{Area within 500 m of any stop}}
+       {\text{Total city area}}.
+\]
+
+**Interpretation.** A city with high 500 m coverage has few large gaps
+in the bus network, whereas low coverage suggests extensive areas
+without nearby bus stops. This indicator is sensitive both to density
+and to how evenly stops are spread across the urban fabric.
+
+## 3. Kernel Density Estimation (KDE)
+
+**Concept.** Kernel density estimation treats bus stops as a spatial
+point process and estimates a **continuous intensity surface**: the
+expected number of stops per unit area at each location, smoothed over a
+specified bandwidth. KDE is useful for identifying clusters and
+corridors of high bus service.
+
+**Implementation.**
+
+1. Extract the projected \(x, y\) coordinates of all bus stops.  
+2. Fit a Gaussian kernel density estimator from scikit-learn with a
+   city-specific bandwidth (chosen to reflect typical stop spacing).  
+3. Create a regular grid covering the city extent and evaluate the KDE
+   at each grid cell.  
+4. Visualise the resulting intensity surface as a heatmap and overlay
+   the city boundary.
+
+**Interpretation.** KDE highlights **hotspots** (dense corridors,
+terminals, downtown areas) and **cold spots** (sparsely served edge
+zones). Comparing heatmaps across the four cities helps to understand
+whether high densities are concentrated in a small core or more
+evenly spread.
+
+## 4. Nearest-Neighbour Distances
+
+**Concept.** While density summarises the average number of stops per
+area, the **nearest-neighbour distance** between stops captures the
+regularity of spacing along streets and across neighbourhoods. It is
+derived from point pattern analysis and relates to notions of clustering
+versus dispersion.
+
+**Implementation.**
+
+1. Construct a KDTree from stop coordinates in the projected CRS.  
+2. For each stop, query the distance to its second-nearest neighbour
+   (the first neighbour is the stop itself).  
+3. Store this distance as `nn_dist` in the GeoDataFrame.  
+4. Summarise the distribution (mean, median, 90th percentile, min, max)
+   and map the `nn_dist` values.
+
+**Interpretation.**
+
+- Short distances indicate **tightly spaced** stops or overlapping
+  routes.  
+- Long distances indicate **gaps** in the network or peripheral areas.  
+- Mapping `nn_dist` reveals whether gaps are localised (e.g. industrial
+  zones, water bodies) or widely distributed.
+
+## 5. Joint Interpretation of Indicators
+
+The indicators are designed to be read **together**:
+
+- A city may have **high density** but still exhibit **low 500 m
+  coverage** if stops are clustered in a small core.  
+- KDE highlights **where** in the city density is concentrated,
+  complementing the scalar density metric.  
+- Nearest-neighbour statistics reveal whether accessibility is
+  relatively uniform or if there are pockets of poor coverage.
+
+By juxtaposing these measures, the analysis moves beyond single-number
+comparisons and offers a richer picture of bus accessibility in each
+city.
+
+# Limitations
+
+Several limitations should be kept in mind:
+
+- **Data completeness and definitions.** NYC bus shelters undercount
+  all bus stops; OpenStreetMap coverage for Amsterdam and Shanghai may
+  be incomplete or heterogeneous.  
+- **Euclidean distance approximation.** The 500 m buffers do not follow
+  the street network, so they may overestimate effective walking access
+  in areas with barriers (motorways, rivers).  
+- **Temporal dynamics.** Service frequency, operating hours, and route
+  patterns are not modelled; the analysis focuses on the **spatial
+  geometry** of bus stops at a single point in time.
+
+Despite these caveats, the methods provide a transparent and replicable
+framework for comparing bus accessibility across very different urban
+contexts.

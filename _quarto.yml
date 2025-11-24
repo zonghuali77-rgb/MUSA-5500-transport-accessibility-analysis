@@ -1,0 +1,33 @@
+project:
+  type: website
+
+website:
+  title: "Global Bus Accessibility Analysis"
+
+  navbar:
+    left:
+      - text: "About"
+        href: website/about.qmd
+      
+      - text: "Project Overview"
+        href: index.qmd
+
+      - text: "Methods"
+        href: website/methods.qmd
+
+      - text: "Results"
+        href: website/results.qmd
+
+      - text: "Cities"
+        menu:
+          - text: "New York City"
+            href: website/city_nyc.qmd
+          - text: "Singapore"
+            href: website/city_sg.qmd
+          - text: "Amsterdam"
+            href: website/city_ams.qmd
+          - text: "Shanghai"
+            href: website/city_sh.qmd
+
+      - text: "Data Sources"
+        href: website/data_sources.qmd
